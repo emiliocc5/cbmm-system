@@ -1,30 +1,38 @@
 package com.processor.core.domain.model;
 
+import com.processor.core.domain.enums.TransactionStatus;
 import com.processor.core.domain.enums.TransactionType;
+import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
-import lombok.AllArgsConstructor;
-import lombok.Getter;
-import lombok.Setter;
+import jakarta.persistence.Table;
+import lombok.*;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 
-@Getter
-@Setter
+
 @Entity
+@Table(name = "transactions")
+@NoArgsConstructor
+@AllArgsConstructor
+@Getter
+@Builder
 public class Transaction {
     @Id
     private String id;
     private String accountId;
+    private String eventId;
+    private String currency;
+
+    @Column(precision = 19, scale = 4)
     private BigDecimal amount;
+    @Column(precision = 19, scale = 4)
+    private BigDecimal balanceAfter;
+
     private TransactionType type;
-
-    protected Transaction() {}
-
-    public Transaction(String accountId, BigDecimal amount, TransactionType type) {
-        this.accountId = accountId;
-        this.amount = amount;
-        this.type = type;
-    }
+    private TransactionStatus status;
+    private LocalDateTime operationDate;
+    private LocalDateTime processedAt;
 
 }

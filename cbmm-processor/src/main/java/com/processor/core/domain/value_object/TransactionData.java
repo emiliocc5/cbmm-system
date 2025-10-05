@@ -1,14 +1,16 @@
 package com.processor.core.domain.value_object;
 
-import lombok.AllArgsConstructor;
-import lombok.Getter;
+import lombok.*;
 
-import java.util.Date;
+import java.time.LocalDateTime;
 
-@Getter
+@Data
+@Builder
+@NoArgsConstructor
 @AllArgsConstructor
 public class TransactionData {
+    private String eventId;
     private TransferAccount sourceAccount;
     private TransferAccount destinationAccount;
-    private Date operationDate;
+    private LocalDateTime operationDate;
 }
