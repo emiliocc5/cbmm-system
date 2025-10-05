@@ -1,0 +1,59 @@
+services:
+  cbmm-processor:
+    build:
+      context: ./cbmm-processor
+      dockerfile: Dockerfile
+    container_name: cbmm-processor
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cbmm-network
+
+  postgres:
+    image: postgres:18.0
+    container_name: postgres
+    environment:
+      POSTGRES_DB: cbmm
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U user -d cbmm" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cbmm-network
+
+  redis:
+    image: redis:8.2.2
+    container_name: redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: [ "redis-server", "--appendonly", "yes" ]
+    networks:
+      - cbmm-network
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  postgres_data:
+  redis-data:
+
+networks:
+  cbmm-network:
+    driver: bridge
