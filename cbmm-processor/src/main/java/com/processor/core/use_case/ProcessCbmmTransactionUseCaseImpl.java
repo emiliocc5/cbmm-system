@@ -9,17 +9,24 @@ import com.processor.core.domain.exception.TransactionProcessingException;
 import com.processor.core.domain.model.Account;
 import com.processor.core.domain.model.Transaction;
 import com.processor.core.domain.value_object.TransactionData;
+import com.processor.core.domain.value_object.TransferAccount;
 import com.processor.core.ports.in.ProcessCbmmTransactionUseCase;
 import com.processor.core.ports.out.AccountRepository;
 import com.processor.core.ports.out.TransactionRepository;
-import jakarta.transaction.Transactional;
+import jakarta.persistence.EntityManager;
 import lombok.AllArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
+
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 @Service
 @AllArgsConstructor
@@ -27,54 +34,29 @@ import java.util.UUID;
 public class ProcessCbmmTransactionUseCaseImpl implements ProcessCbmmTransactionUseCase {
     private final AccountRepository accountRepository;
     private final TransactionRepository transactionRepository;
-
-    //TODO take this to environment variables
-    private static final int MAX_RETRIES = 3;
-    private static final long RETRY_DELAY_MS = 100;
-
+    private final EntityManager entityManager;
 
     @Override
-    @Transactional
+    @Transactional(isolation = Isolation.READ_COMMITTED, propagation = Propagation.REQUIRES_NEW)
     public void process(TransactionData transaction) {
-        String eventId = transaction.getEventId();
-        int attempt = 0;
+        List<String> accountIds = getSortedAccountIds(
+                transaction.getSourceAccount().getAccountId(),
+                transaction.getDestinationAccount().getAccountId()
+        );
 
-        while (attempt < MAX_RETRIES) {
-            try {
-                processWithOptimisticLocking(transaction);
-                log.info("Transaction {} processed successfully", eventId);
-                return;
+        Account account1 = accountRepository.findById(accountIds.get(0))
+                .orElseThrow(() -> new AccountNotFoundException("Account not found: " + accountIds.getFirst()));
 
-            } catch (OptimisticLockingFailureException e) {
-                attempt++;
-                if (attempt >= MAX_RETRIES) {
-                    log.error("Max retries reached for transaction after optimistic lock conflicts");
-                    throw new TransactionProcessingException(
-                            "Failed to process transaction after " + MAX_RETRIES + " attempts", e);
-                }
+        Account account2 = accountIds.size() > 1
+                ? accountRepository.findById(accountIds.get(1))
+                .orElseThrow(() -> new AccountNotFoundException("Account not found: " + accountIds.get(1)))
+                : account1;
 
-                log.warn("Optimistic lock conflict on attempt {} for transaction {}, retrying...", attempt, eventId);
 
-                try {
-                    Thread.sleep(RETRY_DELAY_MS * (long) Math.pow(2, attempt - 1));
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    throw new TransactionProcessingException("Thread interrupted during retry", ie);
-                }
-            }
-        }
-    }
-
-    private void processWithOptimisticLocking(TransactionData transaction) {
-        Account sourceAccount = accountRepository.findById(
-                        transaction.getSourceAccount().getAccountId())
-                .orElseThrow(() -> new AccountNotFoundException("Source account not found: "
-                + transaction.getSourceAccount().getAccountId()));
-
-        Account destinationAccount = accountRepository.findById(
-                        transaction.getDestinationAccount().getAccountId())
-                .orElseThrow(() -> new AccountNotFoundException("Destination account not found: "
-                + transaction.getDestinationAccount().getAccountId()));
+        Account sourceAccount = account1.getId().equals(transaction.getSourceAccount().getAccountId())
+                ? account1 : account2;
+        Account destinationAccount = account1.getId().equals(transaction.getDestinationAccount().getAccountId())
+                ? account1 : account2;
 
         validateTransactionCurrency(sourceAccount,
                 transaction.getSourceAccount().getCurrency());
@@ -90,31 +72,13 @@ public class ProcessCbmmTransactionUseCaseImpl implements ProcessCbmmTransaction
         sourceAccount.debit(transaction.getSourceAccount().getAmount());
         destinationAccount.credit(transaction.getDestinationAccount().getAmount());
 
-        Transaction debitTransaction = Transaction.builder()
-                .id(getUUID())
-                .accountId(transaction.getSourceAccount().getAccountId())
-                .eventId(transaction.getEventId())
-                .type(TransactionType.DEBIT)
-                .amount(transaction.getSourceAccount().getAmount())
-                .currency(transaction.getSourceAccount().getCurrency())
-                .balanceAfter(sourceAccount.getBalance())
-                .operationDate(transaction.getOperationDate())
-                .processedAt(LocalDateTime.now())
-                .status(TransactionStatus.APPLIED)
-                .build();
+        Transaction debitTransaction = buildTransaction(transaction.getSourceAccount(), TransactionType.DEBIT,
+                transaction.getEventId(), transaction.getOperationDate(),
+                sourceAccount.getBalance(), TransactionStatus.APPLIED);
 
-        Transaction creditTransaction = Transaction.builder()
-                .id(getUUID())
-                .accountId(transaction.getDestinationAccount().getAccountId())
-                .eventId(transaction.getEventId())
-                .type(TransactionType.CREDIT)
-                .amount(transaction.getDestinationAccount().getAmount())
-                .currency(transaction.getDestinationAccount().getCurrency())
-                .balanceAfter(destinationAccount.getBalance())
-                .operationDate(transaction.getOperationDate())
-                .processedAt(LocalDateTime.now())
-                .status(TransactionStatus.APPLIED)
-                .build();
+        Transaction creditTransaction = buildTransaction(transaction.getDestinationAccount(), TransactionType.CREDIT,
+                transaction.getEventId(), transaction.getOperationDate(),
+                destinationAccount.getBalance(), TransactionStatus.APPLIED);
 
 
         accountRepository.save(sourceAccount);
@@ -122,9 +86,37 @@ public class ProcessCbmmTransactionUseCaseImpl implements ProcessCbmmTransaction
         transactionRepository.save(debitTransaction);
         transactionRepository.save(creditTransaction);
 
+        entityManager.flush();
+
         log.info("Transaction processed successfully: {} -> {}",
                 sourceAccount.getId(),
                 destinationAccount.getId());
+    }
+
+    private Transaction buildTransaction(TransferAccount account, TransactionType type,
+                                         String eventId, LocalDateTime operationDate,
+                                         BigDecimal balanceAfter, TransactionStatus status) {
+        return Transaction.builder()
+                .id(getUUID())
+                .accountId(account.getAccountId())
+                .eventId(eventId)
+                .type(type)
+                .amount(account.getAmount())
+                .currency(account.getCurrency())
+                .balanceAfter(balanceAfter)
+                .operationDate(operationDate)
+                .processedAt(LocalDateTime.now())
+                .status(status)
+                .build();
+    }
+
+    private List<String> getSortedAccountIds(String sourceId, String destinationId) {
+        if (sourceId.equals(destinationId)) {
+            return List.of(sourceId);
+        }
+        return Stream.of(sourceId, destinationId)
+                .sorted()
+                .toList();
     }
 
     private void validateTransactionCurrency(Account account, String currency) {
@@ -134,7 +126,7 @@ public class ProcessCbmmTransactionUseCaseImpl implements ProcessCbmmTransaction
         }
     }
 
-    protected String getUUID(){
+    private String getUUID(){
         return UUID.randomUUID().toString();
     }
 }

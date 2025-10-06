@@ -1,5 +1,7 @@
 package com.processor.infrastructure.adapters.in.http;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.processor.application.service.CbmmTransactionApplicationService;
 import com.processor.core.domain.value_object.TransactionData;
 import com.processor.core.domain.value_object.TransactionResult;
@@ -9,17 +11,18 @@ import com.processor.infrastructure.adapters.in.http.dto.EventDTO;
 import lombok.AllArgsConstructor;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.time.LocalDateTime;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+
 
 @RestController
 @RequestMapping("/api/cbmm")
@@ -27,10 +30,15 @@ import java.util.concurrent.CompletableFuture;
 @Slf4j
 public class CbmmController {
     private final CbmmTransactionApplicationService applicationService;
+    private final ObjectMapper objectMapper;
 
     @PostMapping("/process-batch")
     public ResponseEntity<BatchProcessingResponse> processBatch(
-            @RequestBody List<TransactionData> transactions) {
+            @RequestBody List<EventDTO> eventDTOS) {
+
+        List<TransactionData> transactions = eventDTOS.stream()
+                .map(this::mapFromEventDTO)
+                .toList();
 
         List<CompletableFuture<TransactionResult>> futures =
                 applicationService.processTransactionsConcurrently(transactions);
@@ -56,10 +64,30 @@ public class CbmmController {
         return ResponseEntity.ok(response);
     }
 
+    @PostMapping(value = "/process-batch-file", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<BatchProcessingResponse> processBatchFile(
+            @RequestParam("file") MultipartFile file) {
+        try {
+            List<EventDTO> eventDTOS = objectMapper.readValue(
+                    file.getInputStream(),
+                    new TypeReference<>() {}
+            );
+
+            return processBatch(eventDTOS);
+        } catch (IOException e) {
+            log.error("Error reading JSON File", e);
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
     @PostMapping("/process-single")
     public ResponseEntity<TransactionResult> processSingle(
             @RequestBody EventDTO event) {
-        log.info("Received event {}", event);
+        TransactionResult result = applicationService.processTransactionSync(mapFromEventDTO(event));
+        return ResponseEntity.ok(result);
+    }
+
+    private TransactionData mapFromEventDTO(EventDTO event) {
         TransactionData transaction = new TransactionData();
         transaction.setEventId(event.getEvent_id());
         LocalDateTime operationDate = ZonedDateTime
@@ -80,7 +108,6 @@ public class CbmmController {
         transaction.setSourceAccount(sourceAccount);
         transaction.setDestinationAccount(destinationAccount);
 
-        TransactionResult result = applicationService.processTransaction(transaction);
-        return ResponseEntity.ok(result);
+        return transaction;
     }
 }
