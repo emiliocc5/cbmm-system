@@ -1,11 +1,12 @@
 package com.processor.core.domain.value_object;
 
-import lombok.AllArgsConstructor;
-import lombok.Getter;
+import lombok.*;
 
 import java.math.BigDecimal;
 
-@Getter
+@Data
+@Builder
+@NoArgsConstructor
 @AllArgsConstructor
 public class TransferAccount {
     private String accountId;
