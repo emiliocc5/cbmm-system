@@ -5,7 +5,6 @@ import com.processor.core.domain.enums.TransactionType;
 import com.processor.core.domain.exception.AccountNotFoundException;
 import com.processor.core.domain.exception.InsufficientFundsException;
 import com.processor.core.domain.exception.InvalidCurrencyException;
-import com.processor.core.domain.exception.TransactionProcessingException;
 import com.processor.core.domain.model.Account;
 import com.processor.core.domain.model.Transaction;
 import com.processor.core.domain.value_object.TransactionData;

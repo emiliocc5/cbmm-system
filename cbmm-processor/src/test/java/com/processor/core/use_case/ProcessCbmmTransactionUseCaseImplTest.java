@@ -6,7 +6,6 @@ import com.processor.core.domain.enums.TransactionType;
 import com.processor.core.domain.exception.AccountNotFoundException;
 import com.processor.core.domain.exception.InsufficientFundsException;
 import com.processor.core.domain.exception.InvalidCurrencyException;
-import com.processor.core.domain.exception.TransactionProcessingException;
 import com.processor.core.domain.model.Account;
 import com.processor.core.domain.model.Transaction;
 import com.processor.core.domain.value_object.TransactionData;
@@ -21,7 +20,6 @@ import org.mockito.Captor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.dao.OptimisticLockingFailureException;
 
 import java.math.BigDecimal;
 import java.util.List;
