@@ -1,0 +1,4 @@
+INSERT INTO accounts (id, balance, currency, version, created_at, updated_at)
+VALUES
+    ('ACC987654321', 0.0000, 'USD', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP),
+    ('ACC123456789', 200000.0000, 'MXN', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP);

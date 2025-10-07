@@ -19,6 +19,7 @@ import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.UUID;
 
 @Service
 @AllArgsConstructor
@@ -90,6 +91,7 @@ public class ProcessCbmmTransactionUseCaseImpl implements ProcessCbmmTransaction
         destinationAccount.credit(transaction.getDestinationAccount().getAmount());
 
         Transaction debitTransaction = Transaction.builder()
+                .id(getUUID())
                 .accountId(transaction.getSourceAccount().getAccountId())
                 .eventId(transaction.getEventId())
                 .type(TransactionType.DEBIT)
@@ -102,6 +104,7 @@ public class ProcessCbmmTransactionUseCaseImpl implements ProcessCbmmTransaction
                 .build();
 
         Transaction creditTransaction = Transaction.builder()
+                .id(getUUID())
                 .accountId(transaction.getDestinationAccount().getAccountId())
                 .eventId(transaction.getEventId())
                 .type(TransactionType.CREDIT)
@@ -129,5 +132,9 @@ public class ProcessCbmmTransactionUseCaseImpl implements ProcessCbmmTransaction
             throw new InvalidCurrencyException("Currency mismatch for account " + account.getId() +
                     ". Expected: " + account.getCurrency() + ", Got: " + currency);
         }
+    }
+
+    protected String getUUID(){
+        return UUID.randomUUID().toString();
     }
 }
