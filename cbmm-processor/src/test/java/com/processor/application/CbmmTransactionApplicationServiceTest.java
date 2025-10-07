@@ -161,7 +161,7 @@ public class CbmmTransactionApplicationServiceTest extends MockFactoryTest {
     @DisplayName("Should handle OptimisticLockException, retry 5 times and failed")
     void testGivenOptimisticLockConflict_ThenRetryMaxTimesAndFailed() {
         TransactionData transaction = createTransactionData();
-        String errorMessage = "Optimistick locking exception on " + EVENT_ID;
+        String errorMessage = "Optimistic locking exception on " + EVENT_ID;
         OptimisticLockingFailureException exception = new OptimisticLockingFailureException(errorMessage);
         String resultErrorMessage = "Failed to process transaction " + EVENT_ID +
                 " after 5 attempts due to concurrent modifications";

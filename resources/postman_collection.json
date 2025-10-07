@@ -1,0 +1,42 @@
+{
+	"info": {
+		"_postman_id": "5db89c73-4b4d-432c-bbde-b04ff3152edb",
+		"name": "CBMM Processor - Test",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "49031161",
+		"_collection_link": "https://emiliocaccia5-4474063.postman.co/workspace/Emilio-Caccia-Campaner's-Worksp~967850d7-1248-447a-832b-1ba55ee013fc/collection/49031161-5db89c73-4b4d-432c-bbde-b04ff3152edb?action=share&source=collection_link&creator=49031161"
+	},
+	"item": [
+		{
+			"name": "http://localhost:8080/api/cbmm/process-batch-file",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "file",
+							"type": "file",
+							"src": "/C:/Users/Emilio/OneDrive/Desktop/events.json"
+						}
+					]
+				},
+				"url": {
+					"raw": "http://localhost:8080/api/cbmm/process-batch-file",
+					"protocol": "http",
+					"host": [
+						"localhost"
+					],
+					"port": "8080",
+					"path": [
+						"api",
+						"cbmm",
+						"process-batch-file"
+					]
+				}
+			},
+			"response": []
+		}
+	]
+}
