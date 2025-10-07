@@ -34,6 +34,11 @@ docker compose down
 
 - **CBMM-Processor**: http://localhost:8080
 
+### Consideraciones
+- A los efectos de poder validar el comportamiento de la aplicación de manera aislada se crearon endpoints de prueba y se adjunta una collection de postman
+útil para realizar pruebas en ambientes bajos. [postman-collection](./resources/postman_collection.json)
+- El endpoint declarado en el apartado de [diseño](design.md) no refleja la realidad actual de la aplicación sino un deseable.
+- La data inicial cargada tiene varias cuentas extra que matchean con las pruebas realizadas.
 
 ---
 **Autor**: [Emilio Nicolas Caccia Campaner]  
