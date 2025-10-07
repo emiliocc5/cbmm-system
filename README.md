@@ -20,14 +20,14 @@ Crear una plataforma que permita realizar transferencias de dinero transfronteri
 ### Comandos Principales
 
 ```bash
-# Construir sin cache
-docker compose build --no-cache
-
-# Ejecutar aplicación
-docker compose up -d
-
-# Detener servicios
-docker compose down
+make build          # Construir servicios
+make up             # Iniciar servicios en background
+make down           # Detener servicios
+make logs           # Ver logs en tiempo real
+make clean          # Limpieza completa (volumes + system prune)
+make restart        # Reiniciar servicios
+make infra          # Solo infraestructura (postgres + redis)
+make services       # Solo servicios aplicación
 ```
 
 ### Acceso a Servicios
