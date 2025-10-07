@@ -1,12 +1,19 @@
 package com.processor.application.service;
 
+import com.processor.core.domain.exception.AccountNotFoundException;
+import com.processor.core.domain.exception.InsufficientFundsException;
+import com.processor.core.domain.exception.InvalidCurrencyException;
+import com.processor.core.domain.exception.TransactionProcessingException;
 import com.processor.core.domain.value_object.TransactionResult;
 import com.processor.core.ports.in.ProcessCbmmTransactionUseCase;
 import com.processor.core.ports.out.IdempotencyChecker;
 import com.processor.core.domain.value_object.TransactionData;
-import jakarta.transaction.Transactional;
-import lombok.AllArgsConstructor;
+import com.processor.infrastructure.config.TransactionConfig;
+import jakarta.persistence.OptimisticLockException;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.hibernate.StaleObjectStateException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
@@ -14,12 +21,13 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 @Service
-@AllArgsConstructor
 @Slf4j
+@RequiredArgsConstructor
 public class CbmmTransactionApplicationService {
+
+    private final TransactionConfig transactionConfig;
     private final ProcessCbmmTransactionUseCase useCase;
     private final IdempotencyChecker idempotencyChecker;
-
 
     public List<CompletableFuture<TransactionResult>> processTransactionsConcurrently(
             List<TransactionData> transactions) {
@@ -48,7 +56,7 @@ public class CbmmTransactionApplicationService {
                     return TransactionResult.alreadyProcessing(eventId);
                 }
 
-                useCase.process(transaction);
+                processTransaction(transaction);
 
                 idempotencyChecker.markAsProcessed(eventId);
                 log.info("Event {} processed successfully", eventId);
@@ -63,8 +71,67 @@ public class CbmmTransactionApplicationService {
         });
     }
 
-    @Transactional
-    public TransactionResult processTransaction(TransactionData transaction) {
+    private void processTransaction(TransactionData transaction) {
+        String eventId = transaction.getEventId();
+        int attempt = 0;
+
+        while (attempt < transactionConfig.getMaxAttempts()) {
+            try {
+                useCase.process(transaction);
+                log.info("Transaction {} processed successfully on attempt {}", eventId, attempt + 1);
+                return;
+
+            } catch (OptimisticLockingFailureException | StaleObjectStateException | OptimisticLockException e) {
+                attempt++;
+
+                if (attempt >= transactionConfig.getMaxAttempts()) {
+                    log.error("Max retries ({}) reached for transaction {} after optimistic lock conflicts",
+                            transactionConfig.getMaxAttempts(), eventId);
+                    throw new TransactionProcessingException(
+                            String.format("Failed to process transaction %s after %d attempts due to concurrent modifications",
+                                    eventId, transactionConfig.getMaxAttempts()), e);
+                }
+
+                long backoffDelay = calculateBackoffWithJitter(attempt);
+                log.warn("Optimistic lock conflict on attempt {} for transaction {}, retrying after {}ms...",
+                        attempt, eventId, backoffDelay);
+
+                sleep(backoffDelay);
+
+            } catch (InsufficientFundsException | InvalidCurrencyException | AccountNotFoundException be) {
+                log.error("Business validation error processing transaction {}: {}", eventId, be.getMessage());
+                throw be;
+
+            } catch (Exception e) {
+                log.error("Unexpected error processing transaction {}: {}", eventId, e.getMessage(), e);
+                throw new TransactionProcessingException(
+                        String.format("Unexpected error processing transaction %s", eventId), e);
+            }
+        }
+    }
+
+    //Temporal dispersion of threads
+    private long calculateBackoffWithJitter(int attempt) {
+        long exponentialDelay = transactionConfig.getBaseDelayMs() * (long) Math.pow(2, attempt - 1);
+        long cappedDelay = Math.min(exponentialDelay, transactionConfig.getMaxDelayMs());
+
+
+        double jitterFactor = 0.75 + (Math.random() * 0.5);
+        long delayWithJitter = (long) (cappedDelay * jitterFactor);
+
+        return Math.max(transactionConfig.getBaseDelayMs(), delayWithJitter);
+    }
+
+    private void sleep(long milliseconds) {
+        try {
+            Thread.sleep(milliseconds);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new TransactionProcessingException("Thread interrupted during retry backoff", e);
+        }
+    }
+
+    public TransactionResult processTransactionSync(TransactionData transaction) {
         String eventId = transaction.getEventId();
 
         if (idempotencyChecker.isProcessed(eventId)) {

@@ -4,17 +4,17 @@ import com.processor.MockFactoryTest;
 import com.processor.application.service.CbmmTransactionApplicationService;
 import com.processor.core.domain.value_object.TransactionData;
 import com.processor.core.domain.value_object.TransactionResult;
-import com.processor.core.domain.value_object.TransferAccount;
 import com.processor.core.ports.in.ProcessCbmmTransactionUseCase;
 import com.processor.core.ports.out.IdempotencyChecker;
+import com.processor.infrastructure.config.TransactionConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.OptimisticLockingFailureException;
 
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
@@ -23,6 +23,9 @@ import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 public class CbmmTransactionApplicationServiceTest extends MockFactoryTest {
+    @Mock
+    private TransactionConfig transactionConfig;
+
     @Mock
     private ProcessCbmmTransactionUseCase processCbmmTransactionUseCase;
 
@@ -36,6 +39,8 @@ public class CbmmTransactionApplicationServiceTest extends MockFactoryTest {
     @DisplayName("Should process transaction async successfully")
     void testProcessTransactionAsync_Success() {
         TransactionData transaction = createTransactionData();
+
+        when(transactionConfig.getMaxAttempts()).thenReturn(5);
 
         when(idempotencyChecker.isProcessed(EVENT_ID)).thenReturn(false);
         when(idempotencyChecker.tryMarkAsProcessing(EVENT_ID)).thenReturn(true);
@@ -98,11 +103,13 @@ public class CbmmTransactionApplicationServiceTest extends MockFactoryTest {
     }
 
     @Test
-    @DisplayName("Should handle exception during async processing")
-    void testProcessTransactionAsync_Exception() {
+    @DisplayName("Should handle Runtime exception during async processing")
+    void testProcessTransactionAsync_RuntimeException() {
         TransactionData transaction = createTransactionData();
-        String errorMessage = "Database connection failed";
+        String errorMessage = "Unexpected error processing transaction " + EVENT_ID;
         RuntimeException exception = new RuntimeException(errorMessage);
+
+        when(transactionConfig.getMaxAttempts()).thenReturn(5);
 
         when(idempotencyChecker.isProcessed(EVENT_ID)).thenReturn(false);
         when(idempotencyChecker.tryMarkAsProcessing(EVENT_ID)).thenReturn(true);
@@ -121,6 +128,68 @@ public class CbmmTransactionApplicationServiceTest extends MockFactoryTest {
     }
 
     @Test
+    @DisplayName("Should handle OptimisticLockException, retry and succeed")
+    void testGivenOptimisticLockConflict_ThenRetryAndSucceed() {
+        TransactionData transaction = createTransactionData();
+        String errorMessage = "Unexpected error processing transaction " + EVENT_ID;
+        OptimisticLockingFailureException exception = new OptimisticLockingFailureException(errorMessage);
+
+        when(transactionConfig.getMaxAttempts()).thenReturn(5);
+
+        when(idempotencyChecker.isProcessed(EVENT_ID)).thenReturn(false);
+        when(idempotencyChecker.tryMarkAsProcessing(EVENT_ID)).thenReturn(true);
+        doThrow(exception).
+                doNothing().
+                when(processCbmmTransactionUseCase).process(transaction);
+        doNothing().when(idempotencyChecker).markAsProcessed(EVENT_ID);
+
+        CompletableFuture<TransactionResult> resultPromise =
+                cbmmTransactionApplicationService.processTransactionAsync(transaction);
+        TransactionResult result = resultPromise.join();
+
+        assertEquals(TransactionResult.TransactionStatus.SUCCESS, result.getStatus());
+        assertEquals(EVENT_ID, result.getEventId());
+
+        verify(processCbmmTransactionUseCase, times(2)).process(transaction);
+
+        verify(idempotencyChecker).isProcessed(EVENT_ID);
+        verify(idempotencyChecker).tryMarkAsProcessing(EVENT_ID);
+        verify(idempotencyChecker).markAsProcessed(EVENT_ID);
+    }
+
+    @Test
+    @DisplayName("Should handle OptimisticLockException, retry 5 times and failed")
+    void testGivenOptimisticLockConflict_ThenRetryMaxTimesAndFailed() {
+        TransactionData transaction = createTransactionData();
+        String errorMessage = "Optimistick locking exception on " + EVENT_ID;
+        OptimisticLockingFailureException exception = new OptimisticLockingFailureException(errorMessage);
+        String resultErrorMessage = "Failed to process transaction " + EVENT_ID +
+                " after 5 attempts due to concurrent modifications";
+
+        when(transactionConfig.getMaxAttempts()).thenReturn(5);
+        when(transactionConfig.getBaseDelayMs()).thenReturn(10L);
+        when(transactionConfig.getBaseDelayMs()).thenReturn(20L);
+
+        when(idempotencyChecker.isProcessed(EVENT_ID)).thenReturn(false);
+        when(idempotencyChecker.tryMarkAsProcessing(EVENT_ID)).thenReturn(true);
+        doThrow(exception).when(processCbmmTransactionUseCase).process(transaction);
+        doNothing().when(idempotencyChecker).markAsFailed(EVENT_ID, resultErrorMessage);
+
+        CompletableFuture<TransactionResult> resultPromise =
+                cbmmTransactionApplicationService.processTransactionAsync(transaction);
+        TransactionResult result = resultPromise.join();
+
+        assertEquals(TransactionResult.TransactionStatus.FAILED, result.getStatus());
+        assertEquals(EVENT_ID, result.getEventId());
+
+        verify(processCbmmTransactionUseCase, times(5)).process(transaction);
+
+        verify(idempotencyChecker).isProcessed(EVENT_ID);
+        verify(idempotencyChecker).tryMarkAsProcessing(EVENT_ID);
+        verify(idempotencyChecker).markAsFailed(EVENT_ID, resultErrorMessage);
+    }
+
+    @Test
     @DisplayName("Should process transaction synchronously successfully")
     void testProcessTransaction_Success() {
         TransactionData transaction = createTransactionData();
@@ -130,7 +199,7 @@ public class CbmmTransactionApplicationServiceTest extends MockFactoryTest {
         doNothing().when(processCbmmTransactionUseCase).process(transaction);
         doNothing().when(idempotencyChecker).markAsProcessed(EVENT_ID);
 
-        TransactionResult result = cbmmTransactionApplicationService.processTransaction(transaction);
+        TransactionResult result = cbmmTransactionApplicationService.processTransactionSync(transaction);
 
         assertEquals(TransactionResult.TransactionStatus.SUCCESS, result.getStatus());
         assertEquals(EVENT_ID, result.getEventId());
@@ -148,7 +217,7 @@ public class CbmmTransactionApplicationServiceTest extends MockFactoryTest {
 
         when(idempotencyChecker.isProcessed(EVENT_ID)).thenReturn(true);
 
-        TransactionResult result = cbmmTransactionApplicationService.processTransaction(transaction);
+        TransactionResult result = cbmmTransactionApplicationService.processTransactionSync(transaction);
 
         assertEquals(TransactionResult.TransactionStatus.ALREADY_PROCESSED, result.getStatus());
         assertEquals(EVENT_ID, result.getEventId());
@@ -166,7 +235,7 @@ public class CbmmTransactionApplicationServiceTest extends MockFactoryTest {
         when(idempotencyChecker.isProcessed(EVENT_ID)).thenReturn(false);
         when(idempotencyChecker.tryMarkAsProcessing(EVENT_ID)).thenReturn(false);
 
-        TransactionResult result = cbmmTransactionApplicationService.processTransaction(transaction);
+        TransactionResult result = cbmmTransactionApplicationService.processTransactionSync(transaction);
 
         assertEquals(TransactionResult.TransactionStatus.ALREADY_PROCESSING, result.getStatus());
         assertEquals(EVENT_ID, result.getEventId());
@@ -189,7 +258,7 @@ public class CbmmTransactionApplicationServiceTest extends MockFactoryTest {
         doNothing().when(idempotencyChecker).markAsFailed(EVENT_ID, errorMessage);
 
         assertThrows(RuntimeException.class, () ->
-                cbmmTransactionApplicationService.processTransaction(transaction));
+                cbmmTransactionApplicationService.processTransactionSync(transaction));
 
         verify(idempotencyChecker).markAsFailed(EVENT_ID, errorMessage);
         verify(idempotencyChecker, never()).markAsProcessed(anyString());
@@ -203,6 +272,8 @@ public class CbmmTransactionApplicationServiceTest extends MockFactoryTest {
                 createTransactionData("event2"),
                 createTransactionData("event3")
         );
+
+        when(transactionConfig.getMaxAttempts()).thenReturn(5);
 
         when(idempotencyChecker.isProcessed(anyString())).thenReturn(false);
         when(idempotencyChecker.tryMarkAsProcessing(anyString())).thenReturn(true);
@@ -242,6 +313,8 @@ public class CbmmTransactionApplicationServiceTest extends MockFactoryTest {
     void testProcessTransactionsConcurrently_SingleTransaction() {
         List<TransactionData> transactions = List.of(createTransactionData());
 
+        when(transactionConfig.getMaxAttempts()).thenReturn(5);
+
         when(idempotencyChecker.isProcessed(EVENT_ID)).thenReturn(false);
         when(idempotencyChecker.tryMarkAsProcessing(EVENT_ID)).thenReturn(true);
         doNothing().when(processCbmmTransactionUseCase).process(any());
@@ -251,7 +324,7 @@ public class CbmmTransactionApplicationServiceTest extends MockFactoryTest {
                 cbmmTransactionApplicationService.processTransactionsConcurrently(transactions);
 
         assertEquals(1, futures.size());
-        TransactionResult result = futures.get(0).join();
+        TransactionResult result = futures.getFirst().join();
         assertEquals(TransactionResult.TransactionStatus.SUCCESS, result.getStatus());
     }
 

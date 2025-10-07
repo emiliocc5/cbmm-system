@@ -10,9 +10,9 @@ import com.processor.core.domain.exception.TransactionProcessingException;
 import com.processor.core.domain.model.Account;
 import com.processor.core.domain.model.Transaction;
 import com.processor.core.domain.value_object.TransactionData;
-import com.processor.core.domain.value_object.TransferAccount;
 import com.processor.core.ports.out.AccountRepository;
 import com.processor.core.ports.out.TransactionRepository;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -24,7 +24,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.OptimisticLockingFailureException;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -40,6 +39,8 @@ class ProcessCbmmTransactionUseCaseImplTest extends MockFactoryTest {
     private AccountRepository accountRepository;
     @Mock
     private TransactionRepository transactionRepository;
+    @Mock
+    private EntityManager entityManager;
 
     @InjectMocks
     private ProcessCbmmTransactionUseCaseImpl processCbmmTransactionUseCaseImpl;
@@ -192,10 +193,18 @@ class ProcessCbmmTransactionUseCaseImplTest extends MockFactoryTest {
     void testGivenNonExistentSourceAccount_ThenThrowException() {
         TransactionData transaction = createTransactionData();
 
+        Account destAccount = createAccount(DEST_ACCOUNT_ID, INITIAL_DEST_BALANCE, DEST_VALID_CURRENCY);
+
+        when(accountRepository.findById(DEST_ACCOUNT_ID)).thenReturn(Optional.of(destAccount));
+
         when(accountRepository.findById(SOURCE_ACCOUNT_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> processCbmmTransactionUseCaseImpl.process(transaction))
-                .isInstanceOf(AccountNotFoundException.class);
+                .isInstanceOf(AccountNotFoundException.class)
+                .hasMessageContaining("Account not found: " + SOURCE_ACCOUNT_ID);
+
+        verify(accountRepository, never()).save(any());
+        verify(transactionRepository, never()).save(any());
     }
 
     @Test
@@ -203,14 +212,11 @@ class ProcessCbmmTransactionUseCaseImplTest extends MockFactoryTest {
     void testGivenNonExistentDestinationAccount_ThenThrowException() {
         TransactionData transaction = createTransactionData();
 
-        Account sourceAccount = createAccount(SOURCE_ACCOUNT_ID, INITIAL_SOURCE_BALANCE, SOURCE_VALID_CURRENCY);
-
-        when(accountRepository.findById(SOURCE_ACCOUNT_ID)).thenReturn(Optional.of(sourceAccount));
         when(accountRepository.findById(DEST_ACCOUNT_ID)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> processCbmmTransactionUseCaseImpl.process(transaction))
                 .isInstanceOf(AccountNotFoundException.class)
-                .hasMessageContaining("Destination account not found: " + DEST_ACCOUNT_ID);
+                .hasMessageContaining("Account not found: " + DEST_ACCOUNT_ID);
 
         verify(accountRepository, never()).save(any());
         verify(transactionRepository, never()).save(any());
@@ -242,74 +248,6 @@ class ProcessCbmmTransactionUseCaseImplTest extends MockFactoryTest {
 
         assertThat(savedSourceAccount.getBalance())
                 .isEqualByComparingTo(INITIAL_SOURCE_BALANCE.subtract(decimalAmount));
-    }
-
-    @Test
-    @DisplayName("Should retry and succeed after optimistic lock conflict")
-    void testGivenOptimisticLockConflict_ThenRetryAndSucceed() {
-        TransactionData transaction = createTransactionData();
-
-        Account sourceAccount = createAccount(SOURCE_ACCOUNT_ID, INITIAL_SOURCE_BALANCE, SOURCE_VALID_CURRENCY);
-        Account destAccount = createAccount(DEST_ACCOUNT_ID, INITIAL_DEST_BALANCE, DEST_VALID_CURRENCY);
-
-        when(accountRepository.findById(SOURCE_ACCOUNT_ID)).thenReturn(Optional.of(sourceAccount));
-        when(accountRepository.findById(DEST_ACCOUNT_ID)).thenReturn(Optional.of(destAccount));
-
-        doThrow(OptimisticLockingFailureException.class)
-                .doNothing()
-                .when(accountRepository).save(any());
-
-        processCbmmTransactionUseCaseImpl.process(transaction);
-
-        verify(accountRepository, times(4)).findById(anyString());
-        verify(accountRepository, times(3)).save(any(Account.class));
-    }
-
-    @Test
-    @DisplayName("Should throw TransactionProcessingException after max retries")
-    void testGivenMaxRetriesExceeded_ThenThrowException() {
-        TransactionData transaction = createTransactionData();
-
-        Account sourceAccount = createAccount(SOURCE_ACCOUNT_ID, INITIAL_SOURCE_BALANCE, SOURCE_VALID_CURRENCY);
-        Account destAccount = createAccount(DEST_ACCOUNT_ID, INITIAL_DEST_BALANCE, DEST_VALID_CURRENCY);
-
-        when(accountRepository.findById(SOURCE_ACCOUNT_ID)).thenReturn(Optional.of(sourceAccount));
-        when(accountRepository.findById(DEST_ACCOUNT_ID)).thenReturn(Optional.of(destAccount));
-
-        doThrow(new OptimisticLockingFailureException("Lock conflict"))
-                .when(accountRepository).save(any(Account.class));
-
-        assertThatThrownBy(() -> processCbmmTransactionUseCaseImpl.process(transaction))
-                .isInstanceOf(TransactionProcessingException.class)
-                .hasMessageContaining("Failed to process transaction after 3 attempts")
-                .hasCauseInstanceOf(OptimisticLockingFailureException.class);
-
-
-        verify(accountRepository, times(6)).findById(anyString());
-        verify(accountRepository, times(3)).save(any(Account.class));
-        verify(transactionRepository, never()).save(any(Transaction.class));
-    }
-
-    @Test
-    @DisplayName("Should handle thread interruption during retry")
-    void testGivenThreadInterruption_ThenThrowException() {
-        TransactionData transaction = createTransactionData();
-
-        Account sourceAccount = createAccount(SOURCE_ACCOUNT_ID, INITIAL_SOURCE_BALANCE, SOURCE_VALID_CURRENCY);
-        Account destAccount = createAccount(DEST_ACCOUNT_ID, INITIAL_DEST_BALANCE, DEST_VALID_CURRENCY);
-
-        when(accountRepository.findById(SOURCE_ACCOUNT_ID)).thenReturn(Optional.of(sourceAccount));
-        when(accountRepository.findById(DEST_ACCOUNT_ID)).thenReturn(Optional.of(destAccount));
-        doThrow(new OptimisticLockingFailureException("Lock conflict"))
-                .when(accountRepository).save(any(Account.class));
-
-        Thread.currentThread().interrupt();
-
-        assertThatThrownBy(() -> processCbmmTransactionUseCaseImpl.process(transaction))
-                .isInstanceOf(TransactionProcessingException.class)
-                .hasMessageContaining("Thread interrupted during retry");
-
-        Thread.interrupted();
     }
 
     @Test

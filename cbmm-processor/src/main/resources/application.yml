@@ -27,7 +27,6 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
 
-
   sql:
     init:
       mode: always
@@ -46,6 +45,11 @@ spring:
           min-idle: 5
           max-wait: 2000ms
 
+transaction:
+  retry:
+    max-attempts: 5
+    base-delay-ms: 50
+    max-delay-ms: 2000
 
 logging:
   level:
