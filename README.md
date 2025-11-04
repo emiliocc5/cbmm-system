@@ -4,8 +4,6 @@ Software for Cross Border Money Movements
 ## Objetivo
 Crear una plataforma que permita realizar transferencias de dinero transfronterizas
 
-- [Challenge](./resources/Challenge.pdf)
-
 ## Diseño e implementación
 
 - [Diseño](design.md)
